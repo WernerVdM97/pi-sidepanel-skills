@@ -9,7 +9,11 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import {
+	matchesKey,
+	truncateToWidth,
+	visibleWidth,
+} from "@earendil-works/pi-tui";
 
 /** Word-wrap a plain string to lines no wider than maxWidth. */
 function wordWrap(text: string, maxWidth: number): string[] {
@@ -291,6 +295,14 @@ class SkillsTabComponent {
 			}
 		}
 
+		// Keymap footer
+		lines.push(
+			th.fg(
+				"dim",
+				truncateToWidth(" j/k scroll │ g/G top/bot", width, ""),
+			),
+		);
+
 		this.cachedWidth = width;
 		this.cachedLines = lines;
 		return lines;
@@ -325,9 +337,7 @@ async function discoverSkills(): Promise<DiscoveredSkill[]> {
 	const os = await import("node:os");
 	const home = os.homedir();
 
-	const skillDirs: string[] = [
-		path.join(home, ".pi", "agent", "skills"),
-	];
+	const skillDirs: string[] = [path.join(home, ".pi", "agent", "skills")];
 
 	// Also scan npm-packaged skills
 	const npmSkillsBase = path.join(home, ".pi", "agent", "npm", "node_modules");
@@ -612,7 +622,10 @@ export default function (pi: ExtensionAPI) {
 		const m = re.exec(p);
 		if (!m) return;
 
-		const content = (event.content ?? []) as Array<{ type: string; text?: string }>;
+		const content = (event.content ?? []) as Array<{
+			type: string;
+			text?: string;
+		}>;
 		const rawText = content
 			.filter((c: { type: string }) => c.type === "text")
 			.map((c: { text?: string }) => c.text ?? "")
