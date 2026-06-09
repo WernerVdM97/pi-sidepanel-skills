@@ -487,6 +487,9 @@ export default function (pi: ExtensionAPI) {
 		registered = false;
 		skillsComponent.reset();
 
+		// Register tab immediately — framework shows empty state while we replay
+		registerTab();
+
 		// Discover skills from filesystem so descriptions load
 		// immediately — before_agent_start may not fire on reconnect.
 		discoverSkills().then((discovered) => {
@@ -562,11 +565,10 @@ export default function (pi: ExtensionAPI) {
 					}
 				}
 			}
+			pi.events.emit("sidepanel:invalidate", { tabId: "skills" });
 		} catch {
-			// Replay failed — tab populates from live events
+			// Replay failed — tab already registered with empty state
 		}
-
-		registerTab();
 	});
 
 	// ── Populate available skill metadata (for descriptions) ─────────
