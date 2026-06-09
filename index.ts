@@ -101,11 +101,12 @@ class SkillsTabComponent {
 	/** Whether any skills have been captured yet */
 	private hasData = false;
 
-	// cache
+	// cache (keyed by width AND height so a vertical resize re-renders)
 	private cachedWidth?: number;
+	private cachedHeight?: number;
 	private cachedLines?: string[];
 
-	/** Approximate visible lines (content area is ~40 lines in the panel) */
+	/** Skill-window size; set each render from the height the framework passes. */
 	private visibleArea = 40;
 
 	constructor() {}
@@ -226,8 +227,15 @@ class SkillsTabComponent {
 		}
 	}
 
-	render(width: number): string[] {
-		if (this.cachedLines && this.cachedWidth === width) return this.cachedLines;
+	render(width: number, height = 40): string[] {
+		const H = Math.max(3, Math.floor(height));
+		this.visibleArea = H;
+		if (
+			this.cachedLines &&
+			this.cachedWidth === width &&
+			this.cachedHeight === H
+		)
+			return this.cachedLines;
 
 		if (this.followTail && this.skills.length > 0) {
 			this.scrollOffset = Math.max(0, this.skills.length - this.visibleArea);
@@ -295,19 +303,21 @@ class SkillsTabComponent {
 			}
 		}
 
-		// Keymap footer (pinned to bottom of 40-line viewport)
-		while (lines.length < 39) lines.push("");
+		// Keymap footer (pinned to the bottom of the viewport)
+		while (lines.length < H - 1) lines.push("");
 		lines.push(
 			th.fg("dim", truncateToWidth(" j/k scroll │ g/G top/bot", width, "")),
 		);
 
 		this.cachedWidth = width;
+		this.cachedHeight = H;
 		this.cachedLines = lines;
 		return lines;
 	}
 
 	invalidate(): void {
 		this.cachedWidth = undefined;
+		this.cachedHeight = undefined;
 		this.cachedLines = undefined;
 	}
 }
@@ -460,8 +470,8 @@ export default function (pi: ExtensionAPI) {
 				handleInput(data: string): void {
 					skillsComponent.handleInput(data);
 				},
-				render(width: number): string[] {
-					return skillsComponent.render(width);
+				render(width: number, height?: number): string[] {
+					return skillsComponent.render(width, height);
 				},
 				invalidate(): void {
 					skillsComponent.invalidate();
@@ -483,12 +493,14 @@ export default function (pi: ExtensionAPI) {
 
 	// ── Session start: reset, replay history, register ─────────────
 
-	pi.on("session_start", (_event, ctx) => {
+	pi.on("session_start", async (_event, ctx) => {
 		registered = false;
 		skillsComponent.reset();
 
-		// Register tab immediately — framework shows empty state while we replay
+		// Register immediately and flag busy so the panel shows a loading
+		// placeholder while we replay.
 		registerTab();
+		pi.events.emit("sidepanel:busy", { tabId: "skills", busy: true });
 
 		// Discover skills from filesystem so descriptions load
 		// immediately — before_agent_start may not fire on reconnect.
@@ -496,6 +508,9 @@ export default function (pi: ExtensionAPI) {
 			skillsComponent.setAvailableSkills(discovered);
 			pi.events.emit("sidepanel:invalidate", { tabId: "skills" });
 		});
+
+		// Yield a frame so the placeholder paints before the synchronous replay.
+		await new Promise((resolve) => setTimeout(resolve, 24));
 
 		// Replay session: catch skill reads that already happened
 		try {
@@ -565,9 +580,11 @@ export default function (pi: ExtensionAPI) {
 					}
 				}
 			}
-			pi.events.emit("sidepanel:invalidate", { tabId: "skills" });
 		} catch {
 			// Replay failed — tab already registered with empty state
+		} finally {
+			pi.events.emit("sidepanel:busy", { tabId: "skills", busy: false });
+			pi.events.emit("sidepanel:invalidate", { tabId: "skills" });
 		}
 	});
 
