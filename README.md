@@ -1,6 +1,6 @@
 # pi-sidepanel-skills
 
-Fetched skills tab for [pi-sidepanel](../pi-sidepanel). Shows only skills explicitly loaded in the current session — not all available skills.
+Fetched skills tab for [pi-sidepanel](https://github.com/WernerVdM97/pi-sidepanel). Shows only skills explicitly loaded in the current session — not all available skills.
 
 ## Detection
 

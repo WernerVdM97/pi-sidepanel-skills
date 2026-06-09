@@ -71,7 +71,7 @@ const defaultTheme: ThemeColors = {
 
 class SkillsTabComponent {
 	/** Max fetched skills tracked. Oldest evicted when exceeded. */
-	private static readonly MAX_SKILLS = 200;
+	private static readonly MAX_SKILLS = 100;
 
 	private skills: FetchedSkill[] = [];
 	/** Map from skill name → fetched skill for quick dedup lookups */
