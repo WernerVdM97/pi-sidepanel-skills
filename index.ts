@@ -70,6 +70,9 @@ const defaultTheme: ThemeColors = {
 // ── SkillsTabComponent ────────────────────────────────────────────────────
 
 class SkillsTabComponent {
+	/** Max fetched skills tracked. Oldest evicted when exceeded. */
+	private static readonly MAX_SKILLS = 200;
+
 	private skills: FetchedSkill[] = [];
 	/** Map from skill name → fetched skill for quick dedup lookups */
 	private skillMap = new Map<string, FetchedSkill>();
@@ -137,6 +140,11 @@ class SkillsTabComponent {
 			};
 			this.skillMap.set(name, entry);
 			this.skills.push(entry);
+			// Evict oldest when over cap
+			while (this.skills.length > SkillsTabComponent.MAX_SKILLS) {
+				const evicted = this.skills.shift();
+				if (evicted) this.skillMap.delete(evicted.name);
+			}
 		}
 		this.hasData = true;
 		this.invalidate();
