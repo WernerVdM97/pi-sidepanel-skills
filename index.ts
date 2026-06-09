@@ -9,7 +9,7 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
+import { matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 /** Word-wrap a plain string to lines no wider than maxWidth. */
 function wordWrap(text: string, maxWidth: number): string[] {
@@ -32,6 +32,17 @@ function wordWrap(text: string, maxWidth: number): string[] {
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
+/** Token estimate helpers (same heuristic as pi core). */
+function est(chars: number): number {
+	return Math.ceil(chars / 4);
+}
+
+function fmtTokens(n: number): string {
+	if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
+	if (n >= 1_000) return (n / 1_000).toFixed(1) + "K";
+	return String(n);
+}
+
 /** Mirrors pi's Skill type from core/skills.ts */
 interface Skill {
 	name: string;
@@ -51,6 +62,8 @@ interface FetchedSkill {
 	description?: string;
 	/** Whether the skill was explicitly invoked by user */
 	explicit: boolean;
+	/** Character count of SKILL.md content (for token estimate) */
+	charCount?: number;
 }
 
 // ── Theme helpers ─────────────────────────────────────────────────────────
@@ -148,6 +161,14 @@ class SkillsTabComponent {
 		}
 		this.hasData = true;
 		this.invalidate();
+	}
+
+	/** Set the character count for a skill's SKILL.md (from read tool result). */
+	setSkillChars(name: string, charCount: number): void {
+		const skill = this.skillMap.get(name);
+		if (skill) {
+			skill.charCount = charCount;
+		}
 	}
 
 	// ── Component interface ──────────────────────────────────────────
@@ -249,7 +270,17 @@ class SkillsTabComponent {
 					skill.count > 1 ? th.fg("dim", ` ×${skill.count}`) : "";
 
 				const nameLine = ` ${tag}${th.fg(nameColor, skill.name)}${countStr}`;
-				lines.push(truncateToWidth(nameLine, width, "…", false));
+
+				// Token size badge: right-aligned if skill was read
+				if (skill.charCount != null) {
+					const tokenStr = th.fg("dim", fmtTokens(est(skill.charCount)));
+					const tokenVw = visibleWidth(tokenStr);
+					const nameVw = visibleWidth(nameLine);
+					const padding = " ".repeat(Math.max(1, width - nameVw - tokenVw));
+					lines.push(nameLine + padding + tokenStr);
+				} else {
+					lines.push(truncateToWidth(nameLine, width, "…", false));
+				}
 
 				if (skill.description) {
 					const maxDesc = Math.max(1, width - 4);
@@ -461,27 +492,64 @@ export default function (pi: ExtensionAPI) {
 				type: string;
 				message?: {
 					role: string;
+					toolName?: string;
+					toolCallId?: string;
 					content?: Array<{
 						type: string;
 						name?: string;
+						text?: string;
 						arguments?: { path?: string };
 					}>;
 				};
 			}>;
 
+			const readPaths = new Map<string, string>();
+
 			for (const entry of entries) {
 				if (entry.type !== "message") continue;
 				const msg = entry.message;
-				if (!msg || msg.role !== "assistant" || !Array.isArray(msg.content))
-					continue;
+				if (!msg) continue;
 
-				for (const block of msg.content) {
-					if (block.type === "toolCall" && block.name === "read") {
-						const path = block.arguments?.path;
-						if (path) {
-							const re = /\/skills\/([\w-]+)(?:\/SKILL)?\.md$/i;
-							const m = re.exec(path);
-							if (m) skillsComponent.addFetchedSkill(m[1]!, false);
+				if (msg.role === "assistant" && Array.isArray(msg.content)) {
+					for (const block of msg.content) {
+						if (block.type === "toolCall" && block.name === "read") {
+							const p = block.arguments?.path;
+							if (p) {
+								const re = /\/skills\/([\w-]+)(?:\/SKILL)?\.md$/i;
+								const m = re.exec(p);
+								if (m) {
+									skillsComponent.addFetchedSkill(m[1]!, false);
+									// Track callId → skillName for result replay
+									// Use block.id or a generated key
+									const callId = (block as any).id;
+									if (callId) readPaths.set(callId, m[1]!);
+								}
+							}
+						}
+					}
+				} else if (msg.role === "toolResult" && msg.toolName === "read") {
+					// Try match by callId first, then by path
+					const callId = msg.toolCallId;
+					let skillName = callId ? readPaths.get(callId) : undefined;
+
+					// Fallback: extract skill name from result content if available
+					if (!skillName && Array.isArray(msg.content)) {
+						const rawText = msg.content
+							.filter((c: any) => c.type === "text")
+							.map((c: any) => c.text ?? "")
+							.join("");
+						// Try to find skill name in frontmatter of content
+						const fmMatch = /^---\nname:\s*(\S+)/m.exec(rawText);
+						if (fmMatch) skillName = fmMatch[1]!;
+					}
+
+					if (skillName && Array.isArray(msg.content)) {
+						const rawText = msg.content
+							.filter((c: any) => c.type === "text")
+							.map((c: any) => c.text ?? "")
+							.join("");
+						if (rawText) {
+							skillsComponent.setSkillChars(skillName, rawText.length);
 						}
 					}
 				}
@@ -530,6 +598,27 @@ export default function (pi: ExtensionAPI) {
 		const m = re.exec(path);
 		if (m) {
 			skillsComponent.addFetchedSkill(m[1]!, false);
+			pi.events.emit("sidepanel:invalidate", { tabId: "skills" });
+		}
+	});
+
+	// 3. Capture SKILL.md content size from read results
+	pi.on("tool_result", async (event, _ctx) => {
+		if (event.toolName !== "read") return;
+		const p = (event.input as { path?: string }).path;
+		if (!p) return;
+
+		const re = /\/skills\/([\w-]+)(?:\/SKILL)?\.md$/i;
+		const m = re.exec(p);
+		if (!m) return;
+
+		const content = (event.content ?? []) as Array<{ type: string; text?: string }>;
+		const rawText = content
+			.filter((c: { type: string }) => c.type === "text")
+			.map((c: { text?: string }) => c.text ?? "")
+			.join("");
+		if (rawText) {
+			skillsComponent.setSkillChars(m[1]!, rawText.length);
 			pi.events.emit("sidepanel:invalidate", { tabId: "skills" });
 		}
 	});
