@@ -1,0 +1,9 @@
+{
+  "name": "pi-sidepanel-skills",
+  "version": "0.1.0",
+  "description": "Skills overview tab for pi-sidepanel — shows loaded agent skills with descriptions",
+  "keywords": ["pi-package"],
+  "pi": {
+    "extensions": ["./index.ts"]
+  }
+}
