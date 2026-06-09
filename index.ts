@@ -295,12 +295,10 @@ class SkillsTabComponent {
 			}
 		}
 
-		// Keymap footer
+		// Keymap footer (pinned to bottom of 40-line viewport)
+		while (lines.length < 39) lines.push("");
 		lines.push(
-			th.fg(
-				"dim",
-				truncateToWidth(" j/k scroll │ g/G top/bot", width, ""),
-			),
+			th.fg("dim", truncateToWidth(" j/k scroll │ g/G top/bot", width, "")),
 		);
 
 		this.cachedWidth = width;
