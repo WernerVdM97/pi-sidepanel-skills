@@ -1,5 +1,7 @@
 # pi-sidepanel-skills
 
+> 🤖 This code is an AI-generated proof-of-concept. Use at your own risk.
+
 Fetched skills tab for [pi-sidepanel](https://github.com/WernerVdM97/pi-sidepanel). Shows only skills explicitly loaded in the current session — not all available skills.
 
 ## Detection
