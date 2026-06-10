@@ -500,7 +500,11 @@ export default function (pi: ExtensionAPI) {
 		// Register immediately and flag busy so the panel shows a loading
 		// placeholder while we replay.
 		registerTab();
-		pi.events.emit("sidepanel:busy", { tabId: "skills", busy: true });
+		pi.events.emit("sidepanel:busy", {
+			tabId: "skills",
+			busy: true,
+			message: "replaying session…",
+		});
 
 		// Discover skills from filesystem so descriptions load
 		// immediately — before_agent_start may not fire on reconnect.
@@ -654,8 +658,15 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	// ── Fallback registration ────────────────────────────────────────
+	//
+	// The framework resets its registry on ITS session_start and then emits
+	// "sidepanel:ready". If this extension's session_start handler ran first,
+	// the registration was wiped — re-register unconditionally (a guard on
+	// `registered` would skip the recovery; it's already true). Registration
+	// is idempotent: the framework dedups by id.
 
 	pi.events.on("sidepanel:ready", () => {
-		if (!registered) registerTab();
+		registered = false;
+		registerTab();
 	});
 }
