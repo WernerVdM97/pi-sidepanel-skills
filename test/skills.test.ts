@@ -26,6 +26,7 @@ interface FetchedSkill {
 	count: number;
 	description?: string;
 	explicit: boolean;
+	charCount?: number;
 }
 
 // ── Skills tracker (extracted from index.ts) ─────────────────────────────
@@ -41,6 +42,13 @@ class SkillsTracker {
 		this.skillMap.clear();
 		this.availableSkills.clear();
 		this.hasData = false;
+	}
+
+	setSkillChars(name: string, charCount: number): void {
+		const skill = this.skillMap.get(name);
+		if (skill) {
+			skill.charCount = charCount;
+		}
 	}
 
 	setAvailableSkills(skills: Skill[]): void {
@@ -88,7 +96,7 @@ class SkillsTracker {
 	get size(): number {
 		return this.skills.length;
 	}
-}
+
 
 // ── Frontmatter parser (extracted from index.ts) ─────────────────────────
 
@@ -183,8 +191,8 @@ describe("SkillsTracker", () => {
 
 	it("explicit trumps auto-triggered", () => {
 		const tracker = new SkillsTracker();
-		tracker.addFetchedSkill("debug", false);   // auto-triggered first
-		tracker.addFetchedSkill("debug", true);     // then explicit
+		tracker.addFetchedSkill("debug", false); // auto-triggered first
+		tracker.addFetchedSkill("debug", true); // then explicit
 
 		const skill = tracker.get("debug")!;
 		assert.equal(skill.count, 2);
@@ -216,7 +224,15 @@ describe("SkillsTracker", () => {
 	it("reset clears everything", () => {
 		const tracker = new SkillsTracker();
 		tracker.addFetchedSkill("x", true);
-		tracker.setAvailableSkills([{ name: "x", description: "desc", filePath: "", baseDir: "", disableModelInvocation: false }]);
+		tracker.setAvailableSkills([
+			{
+				name: "x",
+				description: "desc",
+				filePath: "",
+				baseDir: "",
+				disableModelInvocation: false,
+			},
+		]);
 		tracker.reset();
 
 		assert.equal(tracker.size, 0);
@@ -232,6 +248,8 @@ describe("SkillsTracker", () => {
 		const names = tracker.getAll().map((s) => s.name);
 		assert.deepEqual(names, ["z", "a", "m"]);
 	});
+
+
 });
 
 describe("availableSkills backfill", () => {
@@ -241,7 +259,13 @@ describe("availableSkills backfill", () => {
 		assert.equal(tracker.get("caveman")!.description, undefined);
 
 		tracker.setAvailableSkills([
-			{ name: "caveman", description: "Ultra-compressed mode", filePath: "", baseDir: "", disableModelInvocation: false },
+			{
+				name: "caveman",
+				description: "Ultra-compressed mode",
+				filePath: "",
+				baseDir: "",
+				disableModelInvocation: false,
+			},
 		]);
 
 		assert.equal(tracker.get("caveman")!.description, "Ultra-compressed mode");
@@ -250,18 +274,36 @@ describe("availableSkills backfill", () => {
 	it("setAvailableSkills does not overwrite existing descriptions", () => {
 		const tracker = new SkillsTracker();
 		tracker.setAvailableSkills([
-			{ name: "api-design", description: "Original description", filePath: "", baseDir: "", disableModelInvocation: false },
+			{
+				name: "api-design",
+				description: "Original description",
+				filePath: "",
+				baseDir: "",
+				disableModelInvocation: false,
+			},
 		]);
 		tracker.addFetchedSkill("api-design", true);
-		assert.equal(tracker.get("api-design")!.description, "Original description");
+		assert.equal(
+			tracker.get("api-design")!.description,
+			"Original description",
+		);
 
 		// Re-set with different description
 		tracker.setAvailableSkills([
-			{ name: "api-design", description: "New description", filePath: "", baseDir: "", disableModelInvocation: false },
+			{
+				name: "api-design",
+				description: "New description",
+				filePath: "",
+				baseDir: "",
+				disableModelInvocation: false,
+			},
 		]);
 		// Description was already set when skill was first added, so backfill
 		// won't overwrite (it only fills undefined descriptions)
-		assert.equal(tracker.get("api-design")!.description, "Original description");
+		assert.equal(
+			tracker.get("api-design")!.description,
+			"Original description",
+		);
 	});
 
 	it("setAvailableSkills handles multiple skills", () => {
@@ -271,9 +313,27 @@ describe("availableSkills backfill", () => {
 		tracker.addFetchedSkill("c", true);
 
 		tracker.setAvailableSkills([
-			{ name: "a", description: "Skill A", filePath: "", baseDir: "", disableModelInvocation: false },
-			{ name: "b", description: "Skill B", filePath: "", baseDir: "", disableModelInvocation: false },
-			{ name: "c", description: "Skill C", filePath: "", baseDir: "", disableModelInvocation: false },
+			{
+				name: "a",
+				description: "Skill A",
+				filePath: "",
+				baseDir: "",
+				disableModelInvocation: false,
+			},
+			{
+				name: "b",
+				description: "Skill B",
+				filePath: "",
+				baseDir: "",
+				disableModelInvocation: false,
+			},
+			{
+				name: "c",
+				description: "Skill C",
+				filePath: "",
+				baseDir: "",
+				disableModelInvocation: false,
+			},
 		]);
 
 		assert.equal(tracker.get("a")!.description, "Skill A");
@@ -286,8 +346,20 @@ describe("availableSkills backfill", () => {
 		tracker.addFetchedSkill("existing", true);
 
 		tracker.setAvailableSkills([
-			{ name: "existing", description: "desc", filePath: "", baseDir: "", disableModelInvocation: false },
-			{ name: "unknown", description: "ghost", filePath: "", baseDir: "", disableModelInvocation: false },
+			{
+				name: "existing",
+				description: "desc",
+				filePath: "",
+				baseDir: "",
+				disableModelInvocation: false,
+			},
+			{
+				name: "unknown",
+				description: "ghost",
+				filePath: "",
+				baseDir: "",
+				disableModelInvocation: false,
+			},
 		]);
 
 		assert.equal(tracker.size, 1); // unknown skill not added to tracker

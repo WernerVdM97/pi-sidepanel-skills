@@ -14,6 +14,9 @@ import {
 	truncateToWidth,
 	visibleWidth,
 } from "@earendil-works/pi-tui";
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
+import * as os from "node:os";
 
 /** Word-wrap a plain string to lines no wider than maxWidth. */
 function wordWrap(text: string, maxWidth: number): string[] {
@@ -335,9 +338,9 @@ interface DiscoveredSkill {
 
 /**
  * Scan known skill directories for SKILL.md files and extract
- * name + description from YAML frontmatter. Runs during session_start
- * so descriptions are available immediately, even before the first
- * before_agent_start event fires on reconnect.
+ * name + description from YAML frontmatter.
+ * Runs during session_start so descriptions are available immediately,
+ * even before the first before_agent_start event fires on reconnect.
  */
 async function discoverSkills(): Promise<DiscoveredSkill[]> {
 	const fs = await import("node:fs/promises");
@@ -491,14 +494,44 @@ export default function (pi: ExtensionAPI) {
 		}
 	}
 
+	// ── Manual skill disk log ──────────────────────────────────────
+
+	const MANUAL_LOG = path.join(
+		os.homedir(),
+		".pi",
+		"agent",
+		"manual-skills.json",
+	);
+
+	async function readManualLog(): Promise<Set<string>> {
+		try {
+			const raw = await fs.readFile(MANUAL_LOG, "utf-8");
+			const names: string[] = JSON.parse(raw);
+			return new Set(names);
+		} catch {
+			return new Set();
+		}
+	}
+
+	async function appendManualLog(name: string): Promise<void> {
+		try {
+			const existing = await readManualLog();
+			if (existing.has(name)) return;
+			existing.add(name);
+			await fs.mkdir(path.dirname(MANUAL_LOG), { recursive: true });
+			await fs.writeFile(MANUAL_LOG, JSON.stringify([...existing]), "utf-8");
+		} catch {
+			// silent
+		}
+	}
+
 	// ── Session start: reset, replay history, register ─────────────
 
 	pi.on("session_start", async (_event, ctx) => {
 		registered = false;
 		skillsComponent.reset();
 
-		// Register immediately and flag busy so the panel shows a loading
-		// placeholder while we replay.
+		// Register immediately and flag busy
 		registerTab();
 		pi.events.emit("sidepanel:busy", {
 			tabId: "skills",
@@ -506,17 +539,19 @@ export default function (pi: ExtensionAPI) {
 			message: "replaying session…",
 		});
 
-		// Discover skills from filesystem so descriptions load
-		// immediately — before_agent_start may not fire on reconnect.
-		discoverSkills().then((discovered) => {
-			skillsComponent.setAvailableSkills(discovered);
+		// Discover skills from filesystem so descriptions load immediately
+		discoverSkills().then((skills) => {
+			skillsComponent.setAvailableSkills(skills);
 			pi.events.emit("sidepanel:invalidate", { tabId: "skills" });
 		});
 
-		// Yield a frame so the placeholder paints before the synchronous replay.
+		// Read the manual-skill log so we know which were /-invoked
+		const manualSet = await readManualLog();
+
+		// Yield a frame so the placeholder paints before synchronous replay
 		await new Promise((resolve) => setTimeout(resolve, 24));
 
-		// Replay session: catch skill reads that already happened
+		// Replay session: catch skill reads and set char counts
 		try {
 			const entries = ctx.sessionManager.getEntries() as Array<{
 				type: string;
@@ -527,6 +562,7 @@ export default function (pi: ExtensionAPI) {
 					content?: Array<{
 						type: string;
 						name?: string;
+						id?: string;
 						text?: string;
 						arguments?: { path?: string };
 					}>;
@@ -537,44 +573,38 @@ export default function (pi: ExtensionAPI) {
 
 			for (const entry of entries) {
 				if (entry.type !== "message") continue;
-				const msg = entry.message;
-				if (!msg) continue;
+				const m = entry.message;
+				if (!m) continue;
 
-				if (msg.role === "assistant" && Array.isArray(msg.content)) {
-					for (const block of msg.content) {
+				// Assistant tool calls: catch skill reads
+				if (m.role === "assistant" && Array.isArray(m.content)) {
+					for (const block of m.content) {
 						if (block.type === "toolCall" && block.name === "read") {
 							const p = block.arguments?.path;
-							if (p) {
-								const re = /\/skills\/([\w-]+)(?:\/SKILL)?\.md$/i;
-								const m = re.exec(p);
-								if (m) {
-									skillsComponent.addFetchedSkill(m[1]!, false);
-									// Track callId → skillName for result replay
-									// Use block.id or a generated key
-									const callId = (block as any).id;
-									if (callId) readPaths.set(callId, m[1]!);
-								}
-							}
+							if (!p) continue;
+							const re = /\/skills\/([\w-]+)(?:\/SKILL)?\.md$/i;
+							const match = re.exec(p);
+							if (!match) continue;
+							const name = match[1]!;
+							// Explicit if it was ever /-invoked (from disk log)
+							skillsComponent.addFetchedSkill(name, manualSet.has(name));
+							const callId = (block as any).id ?? "";
+							if (callId) readPaths.set(callId, name);
 						}
 					}
-				} else if (msg.role === "toolResult" && msg.toolName === "read") {
-					// Try match by callId first, then by path
-					const callId = msg.toolCallId;
+				} else if (m.role === "toolResult" && m.toolName === "read") {
+					const callId = m.toolCallId;
 					let skillName = callId ? readPaths.get(callId) : undefined;
-
-					// Fallback: extract skill name from result content if available
-					if (!skillName && Array.isArray(msg.content)) {
-						const rawText = msg.content
+					if (!skillName && Array.isArray(m.content)) {
+						const rawText = m.content
 							.filter((c: any) => c.type === "text")
 							.map((c: any) => c.text ?? "")
 							.join("");
-						// Try to find skill name in frontmatter of content
 						const fmMatch = /^---\nname:\s*(\S+)/m.exec(rawText);
 						if (fmMatch) skillName = fmMatch[1]!;
 					}
-
-					if (skillName && Array.isArray(msg.content)) {
-						const rawText = msg.content
+					if (skillName && Array.isArray(m.content)) {
+						const rawText = m.content
 							.filter((c: any) => c.type === "text")
 							.map((c: any) => c.text ?? "")
 							.join("");
@@ -587,6 +617,11 @@ export default function (pi: ExtensionAPI) {
 		} catch {
 			// Replay failed — tab already registered with empty state
 		} finally {
+			// Register skills from disk log that weren't found in replay
+			// (e.g. /skill:NAME invoked but agent hasn't read SKILL.md yet)
+			for (const name of manualSet) {
+				skillsComponent.addFetchedSkill(name, true);
+			}
 			pi.events.emit("sidepanel:busy", { tabId: "skills", busy: false });
 			pi.events.emit("sidepanel:invalidate", { tabId: "skills" });
 		}
@@ -602,13 +637,14 @@ export default function (pi: ExtensionAPI) {
 
 	// ── Track skill invocations ────────────────────────────────────
 
-	// 1. Explicit /skill:NAME commands
+	// 1. Explicit /skill:NAME commands — log to disk for persistence
 	pi.on("input", async (event, _ctx) => {
 		const re = /\/skill:([\w-]+)/g;
 		let match: RegExpExecArray | null;
 		let found = false;
 		while ((match = re.exec(event.text)) !== null) {
 			skillsComponent.addFetchedSkill(match[1]!, true);
+			appendManualLog(match[1]!); // persist across reloads
 			found = true;
 		}
 		if (found) {
